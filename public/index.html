@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stock Radar</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b0f">
+<style>
+:root{--bg:#0b0b0f;--card:#17171d;--fg:#f2f2f5;--mute:#8b8b98;--ok:#30d158;--bad:#ff453a;--acc:#0a84ff}
+@media (prefers-color-scheme:light){:root{--bg:#f4f4f7;--card:#fff;--fg:#111;--mute:#6b6b78}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px -apple-system,system-ui,sans-serif;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom))}
+h1{font-size:22px;margin:8px 0 2px}.sub{color:var(--mute);font-size:14px;margin-bottom:16px}
+.card{background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:12px}
+.big{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--bad)}.dot.ok{background:var(--ok)}
+.row{display:flex;justify-content:space-between;padding:6px 0;color:var(--mute);font-size:14px}.row b{color:var(--fg);font-weight:500}
+button{width:100%;padding:14px;border:0;border-radius:12px;background:var(--acc);color:#fff;font-size:16px;font-weight:600;margin-top:8px}
+button.sec{background:var(--card);color:var(--fg)}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid #444;background:transparent;color:var(--fg);font-size:16px}
+.err{color:var(--bad);font-size:14px;margin-top:6px}.hit{padding:8px 0;border-top:1px solid #8883}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<h1 id="title">Stock radar</h1>
+<div class="sub" id="sub"></div>
+
+<div class="card" id="tokenCard" hidden>
+  <div style="margin-bottom:8px">Enter your access token</div>
+  <input id="token" type="password" autocomplete="off" placeholder="APP_TOKEN">
+  <button id="saveToken">Save</button>
+</div>
+
+<div id="main" hidden>
+  <div class="card">
+    <div class="big"><span class="dot" id="dot"></span><span id="headline">Checking…</span></div>
+    <div id="hits"></div>
+  </div>
+  <div class="card">
+    <div class="row"><span>Last check</span><b id="last">–</b></div>
+    <div class="row"><span>Checks run</span><b id="checks">–</b></div>
+    <div class="row"><span>Stores in range</span><b id="stores">–</b></div>
+    <div class="row"><span>Devices subscribed</span><b id="subs">–</b></div>
+    <div class="err" id="err"></div>
+  </div>
+  <button id="enable">Enable notifications</button>
+  <button id="test" class="sec">Send test notification</button>
+  <button id="open" class="sec">Open Apple Store page</button>
+  <div class="sub" id="hint" style="margin-top:12px"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("token");
+let buyUrl = "https://www.apple.com/shop";
+const api = (path, opts = {}) => fetch("/api/" + path, { ...opts, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } });
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+
+function b64uToBytes(s){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";return Uint8Array.from(atob(s),c=>c.charCodeAt(0))}
+
+async function refresh() {
+  try {
+    const r = await api("status");
+    if (r.status === 401) { localStorage.removeItem("token"); token = null; return init(); }
+    const s = await r.json();
+    const hits = s.inStock || [];
+    $("dot").className = "dot" + (hits.length ? " ok" : "");
+    $("headline").textContent = hits.length ? "IN STOCK" : "Not in stock";
+    $("hits").innerHTML = hits.map(h => `<div class="hit">${h.label} — ${h.store} (${h.miles} mi)</div>`).join("");
+    $("last").textContent = s.lastCheck ? Math.round((Date.now() - s.lastCheck) / 1000) + "s ago" : "never";
+    $("checks").textContent = s.checks;
+    $("stores").textContent = (s.stores || []).map(x => x.name).join(", ") || "none";
+    $("subs").textContent = s.subscribers;
+    buyUrl = s.buyUrl || buyUrl; $("title").textContent = s.productName + " radar";
+    $("sub").textContent = `${s.parts.join(" / ")} · ${s.zip} (${s.radius} mi) · every ${s.pollSeconds}s`;
+    $("err").textContent = s.lastError ? "Last error: " + s.lastError.message : "";
+  } catch (e) { $("err").textContent = "Offline"; }
+}
+
+async function enable() {
+  const isStandalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  if (!isStandalone && /iPhone|iPad/.test(navigator.userAgent)) {
+    $("hint").textContent = "On iPhone: tap Share → Add to Home Screen, open the app from there, then tap Enable.";
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { $("hint").textContent = "Notifications were denied. Enable them in Settings → Notifications → Stock Radar."; return; }
+  const { vapidPublic } = await (await fetch("/api/config")).json();
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(vapidPublic) });
+  await api("subscribe", { method: "POST", body: JSON.stringify(sub.toJSON()) });
+  $("hint").textContent = "Notifications enabled on this device.";
+  refresh();
+}
+
+function init() {
+  if (!token) { $("tokenCard").hidden = false; $("main").hidden = true; return; }
+  $("tokenCard").hidden = true; $("main").hidden = false;
+  refresh();
+}
+$("saveToken").onclick = () => { token = $("token").value.trim(); localStorage.setItem("token", token); init(); };
+$("enable").onclick = enable;
+$("test").onclick = async () => { const r = await (await api("test", { method: "POST" })).json(); $("hint").textContent = r.sent ? "Sent." : "No devices subscribed yet — tap Enable first."; };
+$("open").onclick = () => open(buyUrl);
+init();
+setInterval(() => token && refresh(), 5000);
+</script>
+</body>
+</html>

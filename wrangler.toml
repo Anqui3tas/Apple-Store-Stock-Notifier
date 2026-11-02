@@ -1,0 +1,56 @@
+# ============================================================
+# Apple Store pickup-stock radar  (Cloudflare Worker + Durable Object + PWA)
+# Edit the values marked  <-- EDIT  and deploy with `npx wrangler deploy`.
+# See README.md for the full setup.
+# ============================================================
+name = "stock-radar"                 # <-- EDIT (becomes <name>.<your-subdomain>.workers.dev)
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[durable_objects.bindings]]
+name = "RADAR"
+class_name = "Radar"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Radar"]
+
+[vars]
+# What you're hunting. Shown in the app and in notifications.
+PRODUCT_NAME = "iPhone"                                  # <-- EDIT
+
+# Where tapping a notification goes.
+BUY_URL = "https://www.apple.com/shop/buy-iphone"        # <-- EDIT
+
+# Your ZIP code and how far you're willing to drive (miles).
+ZIP = "00000"                                            # <-- EDIT
+RADIUS_MILES = "30"                                      # <-- EDIT
+
+# Seconds between checks. 8-15 has been fine; going lower risks Apple rate limits.
+POLL_SECONDS = "10"
+
+# Comma-separated  PART_NUMBER:Friendly label  pairs.
+# Find part numbers on the product's buy page (view source, search "partNumber")
+# or in the URL of a configured product on apple.com. Part numbers are region
+# specific (US ones end in LL/A).
+PARTS = "MXXXXLL/A:256GB Black,MXXXXLL/A:512GB Black"    # <-- EDIT
+
+# Apple's carrier/unlock key used by the pickup endpoint. US unlocked iPhone:
+CPPART = "UNLOCKED/US"                                   # <-- EDIT if not a US iPhone
+
+# Contact required by the Web Push protocol (any mailto: or https: URL).
+VAPID_SUBJECT = "mailto:you@example.com"                 # <-- EDIT
+
+# Public VAPID key printed by `node scripts/vapid.mjs`.
+VAPID_PUBLIC = ""                                        # <-- EDIT
+
+# Optional: serve from your own domain on a Cloudflare zone you own.
+# Uncomment and edit. Without it the app lives on the workers.dev URL.
+# [[routes]]
+# pattern = "stock.example.com"
+# custom_domain = true
